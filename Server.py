@@ -1,40 +1,17 @@
 import socket
-import MySQLdb
-from api import load_image_file
-from api import face_encodings
-
-database = MySQLdb.connect("localhost", "root", "123456", "facerecognition", charset='utf8')
-cursor = database.cursor()
+import numpy as np
+import face_recognition
 
 
 class Message:
     def __init__(self, data=[]):
         self.user_id = data[0].split(':')[-1]
         self.function = data[1].split(':')[-1]
-        self.face_id = data[2].split(':')[-1]
+        photo = data[2].split(':')[-1]
+        
 
-    # happens if a new user wants to log in
-    def register(self):
-        mysql = "insert into user_information values ({}, '{}');".format(self.user_id, self.face_id)
-        print(mysql)
+    def recognition(self, reference):
         try:
-            cursor.execute(mysql)
-            database.commit()
-            return b"200"
-        except:
-            database.rollback()
-            return b"405"
-
-    def recognition(self):
-        mysql = "select face_id from user_information where user_id = {};".format(self.user_id)
-        reference = str
-        try:
-            cursor.execute(mysql)
-            results = cursor.fetchall()
-            for row in results:
-                reference = row[0]
-                break
-            print("r", reference)
             reference = string_to_float_array(reference)
             print("r", reference)
             if len(self.face_id) == 0:
@@ -67,19 +44,17 @@ class computation_server:
             while True:
                 tmp = self.socket.recv(2048)
                 tmp = tmp.decode()
+                print(tmp)
                 data += tmp
-                if tmp[len(tmp)-1: len(tmp)] == '\r\n':
+                if tmp[len(tmp)-3: len(tmp)-1] == '\r\n':
                     break
             data = data.split('\r\n')
-            photo = load_image_file(data[2])
-            face_vectors = face_encodings(photo)
-            data[2] = face_vectors[0]
-            message = Message(data)
-            info = ''
+            print(data)
+            face_vectors = face_encodings(data[2])
             if message.function == '201':
-                info = message.register()
+                info = message.register(data)
             elif message.function == '200':
-                info = message.recognition()
+                info = message.recognition(data)
             self.socket.send(info)
 
 
