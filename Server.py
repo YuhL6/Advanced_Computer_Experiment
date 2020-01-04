@@ -1,11 +1,41 @@
 import socket
 import time
+import base64
 import numpy as np
+import threading
+from Crypto.PublicKey import RSA
+from Crypto.Cipher import AES, PKCS1_OAEP
 '''import MySQLdb
 import face_recognition'''
 
 '''database = MySQLdb.connect("localhost", "root", "123456", "facerecognition", charset='utf8')
 cursor = database.cursor()'''
+
+
+def recv_size(sock, count):
+    buf = ''
+    while count > 0:
+        newbuf = sock.recv(count).decode()
+        if not newbuf: return None
+        buf += newbuf
+        count -= len(newbuf)
+    return buf
+
+
+def dec_photo_to_frame(dec_photo):
+    dec_photo = dec_photo.replace('[', '')
+    dec_photo = dec_photo.replace(']', '')
+    dec_photo = dec_photo.replace(',', '')
+    dec_photo = dec_photo.replace('\n', '')
+    arr = np.ndarray((480, 640, 3))
+    li = dec_photo.split(' ')
+    counter = 0
+    for i in range(480):
+        for j in range(640):
+            for k in range(3):
+                arr[i][j][k] = int(li[counter])
+                counter += 1
+    return arr
 
 
 def arr_to_str(arr):
@@ -29,8 +59,8 @@ def str_to_arr(str: str):
 def get_face_id(image):
     """this method will return a list of vectors can simply get the first one"""
     np.array(image)
-    face_ids = face_recognition.face_encodings(image)
-    return face_ids
+    face_id = face_recognition.face_encodings(image)[0]
+    return face_id
 
 
 def face_compare(template, reference):
@@ -64,6 +94,48 @@ def store_into_database(data):
     except:
         database.rollback()
         return False
+
+
+def to_16(key):
+    key = bytes(key, encoding="utf8")
+    while len(key) % 16 != 0:
+        key += b'\0'
+    return key  # 返回bytes
+
+
+class USE_AES:
+    def __init__(self, key):
+        if len(key) > 32:
+            key = key[0:32]
+        self.key = to_16(key)
+
+    def aes(self):
+        return AES.new(self.key, AES.MODE_ECB)  # 初始化加密器
+
+    def encrypt(self, text):
+        aes = self.aes()
+        return str(base64.encodebytes(aes.encrypt(to_16(text))), encoding='utf8').replace('\n', '')  # 加密
+
+    def decodeBytes(self, text):
+        aes = self.aes()
+        return str(aes.decrypt(base64.decodebytes(bytes(text, encoding='utf-8'))).rstrip(b'\0').decode("utf-8"))  # 解密
+
+
+class MyThread(threading.Thread):
+    def __init__(self, func, args):
+        super(MyThread, self).__init__()
+        self.func = func
+        self.args = args
+        self.result = None
+
+    def run(self):
+        self.result = self.func(*self.args)
+
+    def get_result(self):
+        try:
+            return self.result
+        except Exception:
+            return None
 
 
 class Message:
@@ -116,38 +188,63 @@ class Message:
 
 class computation_server:
     def __init__(self):
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sendsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.recvSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.commandSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.private_key = None
+        self.public_key = None
 
     def connect(self):
-        self.socket.connect(('127.0.0.1', 12345))
-        self.socket.send(b'it\'s me')
+        self.recvSocket.connect(('127.0.0.1', 12345))
+        self.recvSocket.send(b'transfer')
         time.sleep(0.5)
-        self.sendsock.connect(('127.0.0.1', 12345))
-        self.sendsock.send(b'hello')
+        self.commandSocket.connect(('127.0.0.1', 12345))
+        self.commandSocket.send(b'command')
+        self.generate_RSA_key()
         self.recv()
+
+    def generate_RSA_key(self):
+        key = RSA.generate(2048)
+        private_key = key.export_key()
+        self.public_key = key.publickey.export_key()
+        self.private_key = RSA.import_key(private_key)
 
     def recv(self):
         while True:
             data = ''
             while True:
-                tmp = self.socket.recv(2048)
+                tmp = self.recvSocket.recv(2048)
                 tmp = tmp.decode()
                 data += tmp
-                if tmp[len(tmp) - 1: len(tmp)] == '\r\n':
+                if data[len(data) - 3: len(data)] == '\r\n\r\n':
                     break
             data = data.split('\r\n')
-            photo = load_image_file(data[2])
-            face_vectors = face_encodings(photo)
-            data[2] = face_vectors[0]
-            message = Message(data)
-            info = ''
-            if message.function == '201':
-                info = message.register()
-            elif message.function == '200':
-                info = message.recognition()
-            self.socket.send(info)
-
+            method_code = data[0].split(' ')[0]
+            if method_code == '002':
+                self.recvSocket.send(self.public_key)
+                self.commandSocket.send(b'next')
+            elif method_code == '000':
+                encypted_AES_key = data[1]
+                cipher_rsa = PKCS1_OAEP.new(self.private_key)
+                AES_key = cipher_rsa.decrypt(encypted_AES_key)
+                aes = USE_AES(AES_key)
+                photo = aes.decodeBytes(data[2])
+                frame = dec_photo_to_frame(photo)
+                face_id = face_recognition.face_encodings(frame)[0]
+                user_id = data[0].split(' ')[1]
+                store_into_database(face_id)
+            elif method_code == '001':
+                task = MyThread(get_from_database())
+                task.start()
+                encypted_AES_key = data[1]
+                cipher_rsa = PKCS1_OAEP.new(self.private_key)
+                AES_key = cipher_rsa.decrypt(encypted_AES_key)
+                aes = USE_AES(AES_key)
+                photo = aes.decodeBytes(data[2])
+                frame = dec_photo_to_frame(photo)
+                face_id = face_recognition.face_encodings(frame)[0]
+                user_id = data[0].split(' ')[1]
+                reference = task.get_result()
+                face_compare(reference, face_id)
 
 def string_to_float_array(str):
     str = str[1:len(str) - 1].split(' ')
