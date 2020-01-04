@@ -12,6 +12,27 @@ database = MySQLdb.connect("localhost", "root", "123456", "face_recognition", ch
 cursor = database.cursor()
 
 
+def string_to_float_array(str):
+    str = str[1:len(str) - 1].split(' ')
+    arr = []
+    for d in str:
+        if d != '' and d[-1] == '\n':
+            d = d[0:len(d) - 1]
+        if d.isprintable() and not d.isspace() and d != '':
+            d = float(d)
+            arr.append(d)
+    return arr
+
+
+def calculate_distance(data1, data2):
+    sum = 0
+    print("data1=", len(data1))
+    print("data2=", len(data2))
+    for i in range(len(data1)):
+        sum = sum + (data1[i] - data2[i]) ** 2
+    return sum ** (1 / 2)
+
+
 def recv_size(sock, count):
     buf = ''
     while count > 0:
@@ -56,13 +77,6 @@ def str_to_arr(str: str):
     return np.array(li)
 
 
-def get_face_id(image):
-    """this method will return a list of vectors can simply get the first one"""
-    np.array(image)
-    face_id = face_recognition.face_encodings(image)[0]
-    return face_id
-
-
 def face_compare(template, reference):
     result = np.dot(template, reference)
     trace = 0
@@ -79,6 +93,7 @@ def get_from_database(user_id):
         results = cursor.fetchall()
         for row in results:
             res.append(row)
+
         return res
     except:
         return None
@@ -137,54 +152,6 @@ class MyThread(threading.Thread):
             return None
 
 
-class Message:
-    def __init__(self, data: list):
-        self.user_id = data[0].split(':')[-1]
-        self.function = data[1].split(':')[-1]
-        image = data[2].split(':')[-1]
-        self.face_id = get_face_id(image)
-
-    def register(self):
-        str = '{}, {}'.format(self.user_id, self.face_id)
-        if store_into_database(str):
-            return 200
-        else:
-            return 405
-
-    def recognition(self):
-        str1 = 'face_id'
-        str2 = 'user_id = {};'.format(self.user_id)
-        res = get_from_database(str1, str2)
-        if res is None:
-            return 405
-        if len(res) == 0:
-            return 403
-
-        mysql = "select face_id from user_information where user_id = {}".format(self.user_id)
-        reference = str
-        try:
-            cursor.execute(mysql)
-            results = cursor.fetchall()
-            for row in results:
-                reference = row[0]
-                break
-            print("r", reference)
-            reference = string_to_float_array(reference)
-            print("r", reference)
-            if len(self.face_id) == 0:
-                return b"403"
-            print("f", self.face_id)
-            fresh = string_to_float_array(self.face_id)
-            print("f", fresh)
-            print(len(reference) == len(fresh))
-            if calculate_distance(reference, fresh) < 0.6:
-                return b"200"
-            else:
-                return b"404"
-        except:
-            return b"405"
-
-
 class computation_server:
     def __init__(self):
         self.recvSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -228,16 +195,18 @@ class computation_server:
                 aes = USE_AES(AES_key)
                 photo = aes.decodeBytes(data[2])
                 frame = dec_photo_to_frame(photo)
-                face_id = face_recognition.face_encodings(frame)[0]
+                face_ids = face_recognition.face_encodings(frame)
+                if len(face_ids) == 0:
+                    continue
                 user_id = data[0].split(' ')[1]
-                if store_into_database(face_id):
+                if store_into_database(user_id, 1, arr_to_str(face_ids[0])):
                     self.recvSocket.send(b'Done')
                 else:
                     self.recvSocket.send(b'Failed')
                 self.commandSocket.send(b'next')
             elif method_code == '001':
                 user_id = data[0].split(' ')[1]
-                task = MyThread(get_from_database(user_id))
+                task = MyThread(get_from_database, (user_id,))
                 task.start()
                 encypted_AES_key = data[1]
                 cipher_rsa = PKCS1_OAEP.new(self.private_key)
@@ -245,32 +214,16 @@ class computation_server:
                 aes = USE_AES(AES_key)
                 photo = aes.decodeBytes(data[2])
                 frame = dec_photo_to_frame(photo)
-                face_id = face_recognition.face_encodings(frame)[0]
+                face_ids = face_recognition.face_encodings(frame)
+                if len(face_ids) == 0:
+                    continue
                 task.join()
-                reference = task.get_result()
-                face_compare(reference, face_id)
-
-def string_to_float_array(str):
-    str = str[1:len(str) - 1].split(' ')
-    arr = []
-
-    for d in str:
-        if d != '' and d[-1] == '\n':
-            d = d[0:len(d) - 1]
-            print(d)
-        if d.isprintable() and not d.isspace() and d != '':
-            d = float(d)
-            arr.append(d)
-    return arr
-
-
-def calculate_distance(data1, data2):
-    sum = 0
-    print("data1=", len(data1))
-    print("data2=", len(data2))
-    for i in range(len(data1)):
-        sum = sum + (data1[i] - data2[i]) ** 2
-    return sum ** (1 / 2)
+                reference = string_to_float_array(task.get_result())
+                if calculate_distance(face_ids[0], reference) <= 0.6:
+                    self.recvSocket.send(b'OK')
+                else:
+                    self.recvSocket.send(b'Failed')
+                self.commandSocket.send(b'next')
 
 
 if __name__ == '__main__':
