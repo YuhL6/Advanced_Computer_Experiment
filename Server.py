@@ -5,11 +5,11 @@ import numpy as np
 import threading
 from Crypto.PublicKey import RSA
 from Crypto.Cipher import AES, PKCS1_OAEP
-'''import MySQLdb
-import face_recognition'''
+import MySQLdb
+import face_recognition
 
-'''database = MySQLdb.connect("localhost", "root", "123456", "facerecognition", charset='utf8')
-cursor = database.cursor()'''
+database = MySQLdb.connect("localhost", "root", "123456", "face_recognition", charset='utf8')
+cursor = database.cursor()
 
 
 def recv_size(sock, count):
@@ -71,9 +71,8 @@ def face_compare(template, reference):
     return trace >= 0
 
 
-def get_from_database(select, condition):
-    """both select and condition are string, e.g. select: user_id; condition: user_id = 111111"""
-    mysql = "select {} from user_information where {};".format(select, condition)
+def get_from_database(user_id):
+    mysql = "select face_id from user_info where user_id = {};".format(user_id)
     res = []
     try:
         cursor.execute(mysql)
@@ -85,8 +84,8 @@ def get_from_database(select, condition):
         return None
 
 
-def store_into_database(data):
-    mysql = "insert into user_information values ({});".format(data)
+def store_into_database(user_id, version, face_id):
+    mysql = "insert into user_info values ({});".format(user_id, version, face_id)
     try:
         cursor.execute(mysql)
         database.commit()
@@ -231,9 +230,14 @@ class computation_server:
                 frame = dec_photo_to_frame(photo)
                 face_id = face_recognition.face_encodings(frame)[0]
                 user_id = data[0].split(' ')[1]
-                store_into_database(face_id)
+                if store_into_database(face_id):
+                    self.recvSocket.send(b'Done')
+                else:
+                    self.recvSocket.send(b'Failed')
+                self.commandSocket.send(b'next')
             elif method_code == '001':
-                task = MyThread(get_from_database())
+                user_id = data[0].split(' ')[1]
+                task = MyThread(get_from_database(user_id))
                 task.start()
                 encypted_AES_key = data[1]
                 cipher_rsa = PKCS1_OAEP.new(self.private_key)
@@ -242,7 +246,7 @@ class computation_server:
                 photo = aes.decodeBytes(data[2])
                 frame = dec_photo_to_frame(photo)
                 face_id = face_recognition.face_encodings(frame)[0]
-                user_id = data[0].split(' ')[1]
+                task.join()
                 reference = task.get_result()
                 face_compare(reference, face_id)
 
