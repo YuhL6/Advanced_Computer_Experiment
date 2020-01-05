@@ -17,21 +17,19 @@ class transfer_server:
         self.transfer_socket = None
         self.command_socket = None
         self.accept_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.accept_socket.bind(('', 12346))
+        self.accept_socket.bind(('', 12345))
         self.next = False
+        self.both = False
 
     def connectToCS(self):
-        tmp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        tmp.bind(('', 12345))
-        tmp.listen(10)
+        self.accept_socket.listen(10)
         first = False
         while True:
-            conn, addr = tmp.accept()
+            conn, addr = self.accept_socket.accept()
             data = conn.recv(1024)
             data = data.decode()
             if data == 'transfer':
                 self.transfer_socket = conn
-                self.transfer_socket.setblocking(False)
                 first = True
             if data == 'command' and first:
                 self.command_socket = conn
@@ -39,29 +37,42 @@ class transfer_server:
         print('connection to CS established')
         task = threading.Thread(target=self.recv_cmd)
         task.start()
-        self.recv_cmd()
+        self.recv_data()
 
     def recv_cmd(self):
         while True:
-            cmd = self.command_socket.recv(1024)
+            cmd = self.command_socket.recv(2048)
             if cmd == b'next':
                 self.next = True
 
     def recv_data(self):
         while True:
             conn, addr = self.accept_socket.accept()
+            task = threading.Thread(target=self.transfer_recv, args=(conn,))
+            task.start()
             while True:
                 tmp = conn.recv(2048)
                 self.transfer_socket.send(tmp)
-                try:
-                    tmp = self.transfer_socket.recv(2048)
-                    conn.send(tmp)
-                except:
-                    pass
                 if self.next:
-                    self.next = False
+                    if self.both:
+                        self.both = False
+                        self.next = False
+                    else:
+                        self.both = True
                     break
             conn.close()
+
+    def transfer_recv(self, conn):
+        while True:
+            tmp = self.transfer_socket.recv(2048)
+            conn.send(tmp)
+            if self.next:
+                if self.both:
+                    self.both = False
+                    self.next = False
+                else:
+                    self.both = True
+                return
 
     def start_server(self):
         print('start server')
