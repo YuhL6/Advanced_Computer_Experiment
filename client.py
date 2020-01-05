@@ -2,76 +2,137 @@ import socket
 import numpy
 import cv2
 import time
-import threading
 import base64
+from Crypto.Cipher import AES
+from Crypto.PublicKey import RSA
+from Crypto.Cipher import AES, PKCS1_OAEP
 
-addr = ('127.0.0.1', 12345)
+import eel
+from try_AES import *
+import random
+
+addr = ('122.51.26.166', 12345)
+
+REGISTER = 0
+LOG = 1
+ASK_KEY = 2
 
 
-class MyThread(threading.Thread):
-    def __init__(self, func, args=None):
-        super(MyThread, self).__init__()
-        self.func = func
-        self.args = args
+def pack(user_id, rsa_enc_aes_key, data, mode):
+    if mode == REGISTER:
+        msg = '000 {}\r\n'.format(user_id)
+        msg += '{}\r\n'.format(rsa_enc_aes_key)
+        msg += '{}\r\n'.format(data)
+        msg += '\r\n'
+        return msg.encode()
+    elif mode == LOG:
+        msg = '001 {}\r\n'.format(user_id)
+        msg += '{}\r\n'.format(rsa_enc_aes_key)
+        msg += '{}\r\n'.format(data)
+        msg += '\r\n'
+        return msg.encode()
+    elif mode == ASK_KEY:
+        msg = '002 {}\r\n'.format('')
+        msg += '{}\r\n'.format('')
+        msg += '{}\r\n'.format('')
+        msg += '\r\n'
+        return msg.encode()
 
-    def run(self):
-        if self.args is not None:
-            self.result = self.func(self.args)
+
+def unpack(data):
+    msg = data.decode()
+    msg = msg.split('\r\n')
+    method_code = msg[0].split(' ')[0]
+    user_id = msg[0].split(' ')[1]
+    rsa_enc_aes_key = msg[1]
+    data = msg[2]
+    return method_code, user_id, rsa_enc_aes_key, data
+
+
+def keyGen(length):
+    checkcode = ''
+    for i in range(length):
+        if random.random() < 0.5:
+            current = chr(random.randrange(65, 90))
+            checkcode += str(current)
         else:
-            self.result = self.func()
-
-    def get_result(self):
-        try:
-            return self.result
-        except Exception:
-            return None
-
-
-def timer(limit_lime, func, args=None):
-    thread = MyThread(func, args)
-    ct = time.time()
-    thread.setDaemon(True)
-    thread.start()
-    while True:
-        res = thread.get_result()
-        if time.time() - ct >= limit_lime or res is not None:
-            return res
+            checkcode += str(random.randint(0, 9))
+    return checkcode
 
 
 class Capture:
-    def __init__(self):
+    def __init__(self, user_id, mode):
+        self.user_id = user_id
+        self.mode = mode
         self.capture = cv2.VideoCapture(0)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.setblocking(False)
+        self.wait_to_send = []
+        self.end = False
         try:
             self.sock.connect(addr)
         except:
-            pass
+            print('error')
+        self.sock.send(pack('', '', '', ASK_KEY))
+        reply = self.sock.recv(1024)
+        print("Public RSA key received")
+        self.public_key = RSA.import_key(reply)
 
     def camera(self):
         camera = cv2.VideoCapture(0)
+        camera.set(3, 640)
+        camera.set(4, 480)
         cv2.namedWindow('MyCamera')
-        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 50]
+        ctime = time.time() - 0.5
         while True:
             success, frame = camera.read()
             cv2.imshow('MyCamera', frame)
-            cv2.imwrite('test.jpg', frame)
             if cv2.waitKey(1) & 0xff == ord(' '):
                 break
-            frame = cv2.imencode('.jpg', frame, encode_param)[1]
-            img_data = str(base64.b64encode(frame), encoding='utf-8')
-            # print(img_data)
-            self.sock.send(str(len(img_data.encode())).encode())
-            self.sock.send(img_data.encode())
-            try:
-                data = self.sock.recv(1024)
-                print(data)
-                if data is not None:
-                    camera.release()
-                    cv2.destroyWindow('MyCamera')
-                    break
-            except:
+            if time.time() - ctime > 0.5:
+                ctime = time.time()
+                self.wait_to_send.append(frame)
+            if self.end:
+                camera.release()
+                cv2.destroyWindow('MyCamera')
+                return 1
+
+    def sender(self):
+        while True:
+            if len(self.wait_to_send) == 0:
                 continue
+            else:
+                frame = self.wait_to_send[0]
+                del self.wait_to_send[0]
+                frame = frame.tolist()
+                aes_key = keyGen(32)
+                aes = USE_AES(aes_key)
+                enc_photo = aes.encrypt(str(frame))
+                cipher_rsa = PKCS1_OAEP.new(self.public_key)
+                enc_key = cipher_rsa.encrypt(aes_key.encode())
+                data = pack(self.user_id, enc_key, enc_photo, self.mode)
+                self.sock.send(data)
+                if self.end:
+                    self.wait_to_send = []
+                    return 1
+
+    def receiver(self):
+        while True:
+            data = self.sock.recv(1024)
+            print(data)
+            '''data = unpack(data)
+            print(data)'''
+            if data == b'Failed':
+                print("Failed")
+                self.end = True
+                return data
+            if data == b'Done':
+                print("Done")
+                self.end = True
+                return data
+            if data == b'OK':
+                print("OK")
+                self.end = True
+                return data
 
     def log(self, user_id):
         info = 'user_id:{}\r\n'.format(user_id)
@@ -81,9 +142,11 @@ class Capture:
         self.camera()
 
     def run(self):
-        self.camera()
+        data = self.camera()
+        return data
 
 
-if __name__ == '__main__':
-    c = Capture()
-    c.run()
+def startCamera(user_id, mode):
+    c = Capture(user_id, mode)
+    feedback = c.run()
+    return feedback
