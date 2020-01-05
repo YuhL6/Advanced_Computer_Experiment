@@ -181,7 +181,7 @@ class computation_server:
                 tmp = self.recvSocket.recv(2048)
                 tmp = tmp.decode()
                 data += tmp
-                if data[len(data) - 3: len(data)] == '\r\n\r\n':
+                if data[len(data) - 4:] == '\r\n\r\n':
                     break
             data = data.split('\r\n')
             method_code = data[0].split(' ')[0]
