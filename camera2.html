@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Face Recognition</title>
+    <script type="text/javascript" src="http://apps.bdimg.com/libs/jquery/2.1.4/jquery.min.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/3.3.7/css/bootstrap.min.css">
+    <style>
+        .c{
+            position: absolute;
+            left:40%;
+            top:30%;
+        }
+    </style>
+
+</head>
+<body>
+    <div class="c">
+        <form>
+            <lable>ID: </lable>
+            <input type="text" id="id-input" name="idContent">
+            <br>
+            <lable>Status: </lable>
+            <input type="radio" name="statusRadio" id="sign_in">Register
+            <input type="radio" name="statusRadio" id="sign_up">Login
+        </form>
+        <button id="take_photo" class="btn btn-primary">take photo</button>
+        <button id="submit" class="btn btn-primary">submit</button>
+    </div>
+    <script type="text/javascript" src="eel.js"></script>
+    <script type="text/javascript">
+        let statuses = document.getElementsByName('statusRadio');
+        statuses[0].checked=true;
+        let idbox=document.querySelector("#id-input");
+        let id=0;
+        let take_photo=document.querySelector("#take_photo");
+        take_photo.addEventListener('click',takePhoto,false);
+        let submit=document.querySelector("#submit");
+        submit.addEventListener('click',sendVector2,false);
+        function takePhoto(){
+            id=0;
+            if(idbox.value!==''){
+                id=idbox.value;
+            }
+            let mode=0;
+            if(statuses[0].checked===true){
+                mode=0;
+            }else{
+                mode=1;
+            }
+            eel.takePhoto(id,mode);
+        }
+        eel.expose(alert_feedback);
+        function alert_feedback(feedback) {
+            window.alert(feedback);
+        }
+    </script>
+    <script type="text/javascript">
+        disableSubmit();
+        function disableSubmit(){
+        let s=document.querySelector('#submit');
+        s.disabled='disabled';
+        }
+        function enableSubmit(){
+            let s=document.querySelector('#submit');
+            s.disabled='';
+        }
+        idbox.addEventListener('blur',judgeIdBox,false);
+        function judgeIdBox(){
+            if(idbox.value==''){
+                disableSubmit();
+            }else{
+                enableSubmit();
+            }
+        }
+    </script>
+</body>
+</html>
