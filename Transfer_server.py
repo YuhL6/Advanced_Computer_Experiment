@@ -18,6 +18,7 @@ class transfer_server:
         self.command_socket = None
         self.accept_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.accept_socket.bind(('', 12345))
+        self.queue = []
         self.next = False
         self.both = False
 
@@ -37,6 +38,8 @@ class transfer_server:
         print('connection to CS established')
         task = threading.Thread(target=self.recv_cmd)
         task.start()
+        task1 = threading.Thread(target=self.send_data)
+        task1.start()
         self.recv_data()
 
     def recv_cmd(self):
@@ -52,8 +55,9 @@ class transfer_server:
             task.start()
             while True:
                 tmp = conn.recv(2048)
-                self.transfer_socket.send(tmp)
+                self.queue.append(tmp)
                 if self.next:
+                    self.queue = []
                     if self.both:
                         self.both = False
                         self.next = False
@@ -61,6 +65,14 @@ class transfer_server:
                         self.both = True
                     break
             conn.close()
+
+    def send_data(self):
+        while True:
+            if len(self.queue) == 0:
+                continue
+            msg = self.queue[0]
+            del self.queue[0]
+            self.transfer_socket.send(msg)
 
     def transfer_recv(self, conn):
         while True:
